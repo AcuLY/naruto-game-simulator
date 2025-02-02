@@ -1,6 +1,6 @@
 from player import Player
 
-
+NONE_ACTION_ID = -1
 MEDITATION_ID = 0
 HEAL_ID = 1
 RASENGAN_ID = 2
@@ -120,6 +120,7 @@ class Expose(Ball):
         if self.target.is_exposed:
             print(f'{self.target} 已被看透，{self} 无效')
         self.target.expose()
+        self.target.charmed_by = self.source
 
 
 class SealAcupoint(Ball):
@@ -177,6 +178,7 @@ class SkillInfo:
         self.target_num = target_num
 
 skill_info_dict = {
+    NONE_ACTION_ID: SkillInfo('无法行动', NONE_ACTION_ID, 0, 0),
     MEDITATION_ID: SkillInfo('打坐', MEDITATION_ID, 0, 0),
     HEAL_ID: SkillInfo('医疗忍术', HEAL_ID, 1, 1),
     RASENGAN_ID: SkillInfo('螺旋丸', RASENGAN_ID, 1, 1),
@@ -191,7 +193,7 @@ skill_info_dict = {
     SHADOW_CLONE_ID: SkillInfo('影分身之术', SHADOW_CLONE_ID, 2, 0),
     RASENSHURIKEN_ID: SkillInfo('螺旋手里剑', RASENSHURIKEN_ID, 3, 1),
     MIRROR_RETURN_ID: SkillInfo('镜反', MIRROR_RETURN_ID, 3, 0),
-    SHARINGAN_ID: SkillInfo('写轮眼', SHARINGAN_ID, 3, 1),
+    SHARINGAN_ID: SkillInfo('写轮眼', SHARINGAN_ID, 3, 0),
     CHIDORI_CURRENT_ID: SkillInfo('千鸟流', CHIDORI_CURRENT_ID, 4, 0),
     SIX_PATHS_MODE_ID: SkillInfo('六道模式', SIX_PATHS_MODE_ID, 5, 0),
     SHINRA_TENSEI_ID: SkillInfo('神罗天征', SHINRA_TENSEI_ID, 0, 0),
@@ -225,7 +227,7 @@ class Skill:
 
     def apply(self):
         if not self.source.is_available():
-            print(f'{self.source} 已死亡，无法再使用 {self}')
+            print(f'{self.source} 已死亡，无法再使用 {self.name}')
             return
         
         print(f"{self} 发动")
@@ -233,15 +235,6 @@ class Skill:
 
     def execute(self):
         raise NotImplementedError()
-
-    def is_sharingan(self) -> bool:
-        """
-        写轮眼需要单独处理
-
-        Returns:
-            bool: 是否是写轮眼
-        """
-        return False
 
 
 class PrioritySkill(Skill):
@@ -340,7 +333,7 @@ class Heal(StatusSkill):
     
     def apply(self):
         if not self.source.is_available():
-            print(f'{self.source} 已死亡，无法再使用 {self}')
+            print(f'{self.source} 已死亡，无法再使用 {self.name}')
             return
 
         if self.source.is_in_kamui_zone != self.target.is_in_kamui_zone:
@@ -413,7 +406,7 @@ class Byakugan(StatusSkill):
     
     def apply(self):
         if not self.source.is_available():
-            print(f'{self.source} 已死亡，无法再使用 {self}')
+            print(f'{self.source} 已死亡，无法再使用 {self.name}')
             return
 
         if self.source.is_in_kamui_zone != self.target.is_in_kamui_zone:
@@ -564,9 +557,9 @@ class Sharingan(PrioritySkill):
 
     def __init__(self, source: Player, target: Player):
         super().__init__("写轮眼", 14, 3, source, target)
-
-    def is_sharingan(self):
-        return True
+    
+    def apply(self):
+        print(f'{self.target} 的招式被 {self.source} 复制')
 
 
 class ChidoriCurrent(BallSkill):
@@ -719,7 +712,7 @@ class ImpureWorldReincarnatio(StatusSkill):
     
     def apply(self):
         if not self.source.is_available():
-            print(f'{self.source} 已死亡，无法再使用 {self}')
+            print(f'{self.source} 已死亡，无法再使用 {self.name}')
             return
 
         if self.source.is_in_kamui_zone != self.target.is_in_kamui_zone:

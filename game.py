@@ -30,6 +30,8 @@ class Game:
     """
 
     def __init__(self, player_num):
+        self.round_count = 1
+
         self.player_num = player_num
         self.players = [Player(i) for i in range(player_num)]
 
@@ -53,9 +55,31 @@ class Game:
         """
         return [player for player in self.players if player.is_available()]
 
+    def get_exposed_players(self) -> list[Player]:
+        """
+        获取被看透的玩家列表
+
+        Returns:
+            list[Player]: 被看透的玩家列表
+        """
+        return [player for player in self.get_available_players() if player.is_exposed]
+
+    def get_movable_players(self) -> list[Player]:
+        """
+        获取能行动的玩家
+
+        Returns:
+            list[Player]: 能行动的玩家列表
+        """
+        return [
+            player
+            for player in self.get_available_players()
+            if player not in self.get_exposed_players()
+        ]
+
     def get_leagl_skills(self, player: Player) -> list[SkillInfo]:
         """
-        根据玩家蓝量获取可释放的招式信息列表
+        根据玩家蓝量获取可释放的招式信息列表，如果玩家无法行动或被看透，则返回空列表
 
         Args:
             player (Player): 目标玩家
@@ -66,28 +90,26 @@ class Game:
         # 封穴
         if player.is_acupoint_sealed():
             print(f"{player} 被封穴")
-            player.add_acupoint_seal_turns(-1)  # 解除封穴
             return [skill_info_dict[sk.MEDITATION_ID]]
-
-        # 普通技能
+        # 普通招式
         legal_skills = [
             skill_info_dict[skill_id]
             for skill_id in range(sk.SKILL_NUM)
             if skill_id not in sk.SIX_PATHS_SKILL_IDS
             and skill_info_dict[skill_id].cost <= player.mp
         ]
-
-        # 六道
+        # 六道招式
         if player.is_in_sixpaths_mode():
             sixpath_skills = [
                 skill_info_dict[skill_id] for skill_id in sk.SIX_PATHS_SKILL_IDS
             ]
             legal_skills.extend(sixpath_skills)
-            player.add_sixpaths_mode_turns(-1)  # 减少六道回合
+
+        legal_skills = sorted(legal_skills, key=lambda s: s.id)
 
         return legal_skills
 
-    def get_sharingan_skills(self, source: Player) -> list[SkillInfo]:
+    def get_imitable_skills(self, source: Player) -> list[SkillInfo]:
         """
         获取写轮眼可复制的招式信息列表
 
@@ -97,60 +119,38 @@ class Game:
         Returns:
             list[SkillInfo]: 可复制招式信息列表
         """
-        return [
-            skill_info_dict[skill.id]
-            for skill in self.skill_instances
-            if skill.id != sk.SHARINGAN_ID  # 不能复制写轮眼
-            and source.is_in_kamui_zone
-            == skill.source.is_in_kamui_zone  # 不能复制不同空间的招式
-        ]
+        imitable_skill_ids = []
 
-    def select_skill_id(
-        self,
-        player: Player,
-        legal_skills: list[SkillInfo],
-        charm_subject: Player = None,
-    ) -> int:
-        """
-        选择一个玩家的招式
+        for target in self.get_available_players():
+            if target == source or target.is_in_kamui_zone != source.is_in_kamui_zone:
+                continue
 
-        Args:
-            player (Player): 使用招式的玩家
-            legal_skills (list[SkillInfo]): 可选招式
-            charm_subject (Player, optional): 如果是心转身选择招式，由心转身使用者来选择
+            target_skill_id = self.skill_ids[target.id]
 
-        Returns:
-            int: 招式编号
-        """
-        # 如果被看透了直接返回预选值
-        preselection = self.preselected_skill_ids[player.id]
-        if preselection != -1:
-            print(f"{player} 看透，已选择招式：{skill_info_dict[preselection].name}")
-            self.preselected_skill_ids[player.id] = -1
-            player.is_exposed = False  # 解除看透
-            return preselection
-        # 否则主动选择
-        skill_id = self.user_select_skill_id(legal_skills)
+            if target_skill_id == sk.SHARINGAN_ID:
+                continue
 
-        print(f"{player} 选择了招式：{skill_info_dict[skill_id].name}")
-        return skill_id
+            imitable_skill_ids.append(target_skill_id)
+        
+        imitable_skill_ids = sorted(imitable_skill_ids)
 
-    def get_legal_targets(self, source: Player) -> list[Player]:
+        return [skill_info_dict[skill_id] for skill_id in imitable_skill_ids]
+
+    def get_legal_skill_targets(self, source: Player) -> list[Player]:
         """
         根据玩家空间状态获取可选择的目标列表
 
         Args:
             source (Player): 源玩家
+            skill_id (int): 使用的招式
 
         Returns:
             list[Player]: 目标列表
         """
         legal_targets = [
             target
-            for target in self.players
-            if source != target
-            and source.is_in_kamui_zone == target.is_in_kamui_zone
-            and target.is_available()
+            for target in self.get_available_players()
+            if source != target and source.is_in_kamui_zone == target.is_in_kamui_zone
         ]
 
         # 医疗忍术、秽土转生的目标可以是自己
@@ -181,44 +181,145 @@ class Game:
 
         return legal_targets
 
-    def select_skill_targets(
-        self,
-        source: Player,
-        legal_targets: list[Player],
-        target_num: int,
-        charm_subject: Player = None,
-    ) -> list[Player]:
+    def load_exposed_selection(self):
         """
-        选择一个玩家招式的目标
+        将预选择的招式载入
+        """
+        for player in self.get_exposed_players():
+            # 预选择的招式
+            preselected_skill_id = self.preselected_skill_ids[player.id]
+
+            if preselected_skill_id != -1:
+                print(
+                    f"{player} 看透，已选择招式：{skill_info_dict[preselected_skill_id].name}"
+                )
+
+                self.skill_ids[player.id] = preselected_skill_id
+
+                self.preselected_skill_ids[player.id] = -1
+
+            # 预选择的目标
+            preselected_targets = self.preselected_skill_targets[player.id]
+
+            if preselected_targets:
+                print(
+                    f"{player} 看透，已选择目标：{', '.join([target.__str__() for target in preselected_targets])}"
+                )
+
+                self.skill_targets[player.id] = preselected_targets
+
+                self.preselected_skill_targets[player.id] = []
+
+    def select_skill_id(self, player: Player, legal_skills: list[SkillInfo]) -> int:
+        """
+        玩家选择招式编号
 
         Args:
-            source (Player): 使用招式的玩家
-            legal_targets (list[Player]): 可选目标
-            target_num (int): 目标数量
-            charm_subject (Player, optional): 如果是心转身选择招式，由心转身使用者来选择
+            player (Player): 使用招式的玩家
+            legal_skills (list[SkillInfo]): 可选招式信息
 
         Returns:
-            list[Player]: 目标列表
+            int: 招式编号
         """
-        # 如果被看透了直接返回预选值
-        preselection = self.preselected_skill_targets[source.id]
-        if preselection:
-            print(
-                f"{source} 看透，已选择目标：{', '.join([target.__str__() for target in preselection])}"
-            )
-            self.preselected_skill_targets[source.id] = []
-            source.is_exposed = False  # 解除看透
-            return preselection
-        # 否则主动选择
-        targets = self.user_select_targets(legal_targets, target_num)
-        if not legal_targets:
-            print(f"{source} 没有可选择的目标，无效")
-            return []
+        if not legal_skills or legal_skills[0] == sk.NONE_ACTION_ID:
+            print(f'{player} 不需要选择招式')
+            return -1
 
-        print(
-            f"{source} 选择了目标：{', '.join([target.__str__() for target in targets])}"
+        if player.is_human:
+            skill_id = self.user_select_skill_id(legal_skills)
+            
+            print(f'{player} 选择了 <{skill_info_dict[skill_id].name}>')
+            return skill_id
+
+    def select_skill_targets(
+        self, player: Player, legal_targets: list[Player], target_num: int
+    ) -> list[Player]:
+        """
+        玩家选择招式目标
+
+        Args:
+            player (Player): 使用招式的玩家
+            legal_targets (list[Player]): 可选目标列表
+            target_num (int): 目标数量
+
+        Returns:
+            list[Player]: 选择的目标列表
+        """
+        if target_num == 0:
+            print(f'{player} 不需要选择目标')
+            return []
+        elif not legal_targets:
+            print(f'{player} 没有可选择的目标，无效')
+            return []
+        elif len(legal_targets) == 1:  # 没得选
+            print(f'{player} 只能选择目标 {legal_targets[0]}')
+            return legal_targets * target_num
+
+        if player.is_human:
+            targets = self.user_select_skill_targets(legal_targets, target_num)
+            
+            print(f'{player} 选择了 {[t.__str__() for t in targets]}')
+            return targets
+
+    def handle_skill_ids_selection(self, is_preselection=False):
+        """
+        正常玩家选择招式或看透玩家选择招式
+
+        Args:
+            player_list (list[Player]): 玩家列表
+            id_list (list[int]): 存储选择的 id 的目的地
+        """
+        player_list = (
+            self.get_exposed_players()
+            if is_preselection
+            else self.get_movable_players()
         )
-        return targets
+        id_list = self.preselected_skill_ids if is_preselection else self.skill_ids
+
+        for player in player_list:
+            if is_preselection:
+                print(f"{player} 开始预选招式")
+            else:
+                print(f"{player} 开始选择招式")
+
+            legal_skills = self.get_leagl_skills(player)
+            skill_id = self.select_skill_id(player, legal_skills)
+
+            id_list[player.id] = skill_id
+
+    def handle_skill_targets_selection(self, is_preselection=False):
+        """
+        正常玩家选择目标或看透玩家选择目标
+
+        Args:
+            player_list (list[Player]): 玩家列表
+            target_list (list[Player]): 存储选择的 target 的目的地
+        """
+        player_list = (
+            self.get_exposed_players()
+            if is_preselection
+            else self.get_movable_players()
+        )
+        target_list = (
+            self.preselected_skill_targets if is_preselection else self.skill_targets
+        )
+
+        for player in player_list:
+            if is_preselection:
+                print(f"{player} 开始预选 {skill_info_dict[self.preselected_skill_ids[player.id]].name}  的目标")
+            else:
+                print(f"{player} 开始选择 {skill_info_dict[self.skill_ids[player.id]].name} 的目标")
+
+            skill_id = (
+                self.preselected_skill_ids[player.id]
+                if is_preselection
+                else self.skill_ids[player.id]
+            )
+            legal_targets = self.get_legal_skill_targets(player)
+            target_num = skill_info_dict[skill_id].target_num
+            targets = self.select_skill_targets(player, legal_targets, target_num)
+
+            target_list[player.id] = targets
 
     def instantiate_skill(
         self, skill_id: int, source: Player, targets: list[Player]
@@ -281,7 +382,7 @@ class Game:
         elif skill_id == sk.SHARINGAN_ID:
             skill_instance = sk.Sharingan(source, targets[0])  # 写轮眼
         elif skill_id == sk.CHIDORI_CURRENT_ID:
-            targets = self.get_legal_targets(source)  # 千鸟流的对象是所有其他玩家
+            targets = self.get_legal_skill_targets(source)  # 千鸟流的对象是所有其他玩家
             skill_instance = sk.ChidoriCurrent(source, targets, ball_matrix)  # 千鸟流
         elif skill_id == sk.SIX_PATHS_MODE_ID:
             skill_instance = sk.SixPathsMode(source)  # 六道模式
@@ -307,8 +408,112 @@ class Game:
             skill_instance = sk.Kamui(source)  # 神威
         elif skill_id == sk.HEAVENLY_TRANSFER_ID:
             skill_instance = sk.HeavenlyTransfer(source, targets[0])  # 天送之术
+        
+        if not skill_instance:
+            print(f'[WARNING]: 无效技能 {source} {targets} {skill_id}')
+
+        if not source.is_using_sharingan:   # 用写轮眼复制的招式不额外耗蓝
+            source.use_mp(skill_instance.cost)
+        else:
+            source.use_mp(skill_info_dict[sk.SHARINGAN_ID].cost)
+            source.is_using_sharingan = False   # 清空状态
 
         return skill_instance
+
+    def load_selected_skills(self):
+        """
+        载入招式
+        """
+        for player in self.get_available_players():
+            skill_id = self.skill_ids[player.id]
+            skill_targets = self.skill_targets[player.id]
+
+            # 无释放招式
+            if skill_id == -1:
+                continue
+            if skill_info_dict[skill_id].target_num > len(skill_targets):
+                print(f'{player} 无目标，无法发动 <{skill_info_dict[skill_id].name}>')
+                continue
+
+            skill_instance = self.instantiate_skill(skill_id, player, skill_targets)
+            self.skill_instances.append(skill_instance)
+
+    def handle_shadow_clone_skills(self):
+        """
+        载入影分身招式
+        """
+        shadow_clone_players = [
+            player for player in self.get_available_players() if player.shadow_clone_num
+        ]
+
+        for player in shadow_clone_players:
+            skill_id = self.skill_ids[player.id]
+
+            while (
+                player.shadow_clone_num and skill_info_dict[player.id].cost <= player.mp
+            ):
+                player.add_shadow_clone_num(-1)
+
+                print(f'\n{player} 开始选择 <影分身 {player.shadow_clone_num}> 的目标')
+
+                legal_targets = self.get_legal_skill_targets(player)
+                target_num = skill_info_dict[skill_id].target_num
+                targets = self.select_skill_targets(player, legal_targets, target_num)
+
+                shadow_skill_instance = self.instantiate_skill(
+                    skill_id, player, targets
+                )
+                self.skill_instances.append(shadow_skill_instance)
+
+    def handle_sharingan_skills(self):
+        """
+        选择并载入写轮眼复制的招式
+        """
+        sharingan_players = [
+            player
+            for player in self.get_available_players()
+            if self.skill_ids[player.id] == sk.SHARINGAN_ID
+        ]
+
+        for player in sharingan_players:
+            print(f"\n{player} 发动 <写轮眼>， 开始选择复制的招式")
+            
+            player.is_using_sharingan = True
+
+            imitable_skills = self.get_imitable_skills(player)
+            skill_id = self.select_skill_id(player, imitable_skills)
+
+            self.skill_ids[player.id] = skill_id    # 覆盖原 id
+            legal_targets = self.get_legal_skill_targets(player)
+
+            target_num = skill_info_dict[skill_id].target_num
+            skill_targets = self.select_skill_targets(player, legal_targets, target_num)
+            
+            self.skill_targets[player.id] = skill_targets   # 覆盖原 target
+            
+            if skill_id == sk.NONE_ACTION_ID:   # 写轮眼无目标，失效
+                print(f'{player} 的 <写轮眼> 由于无目标失效')
+
+    def update_player_status(self):
+        """
+        更新玩家状态
+        """
+        for player in self.get_available_players():
+            # 减少束缚回合
+            if player.is_bound():
+                player.add_bind_turns(-1)
+            # 解除看透
+            if player.is_exposed:
+                player.is_exposed = False
+            # 减少封穴回合
+            if player.is_acupoint_sealed():
+                player.add_acupoint_seal_turns(-1)
+            # 减少六道回合
+            if player.is_in_sixpaths_mode():
+                player.add_sixpaths_mode_turns(-1)
+            # 减少影分身
+            if player.shadow_clone_num:
+                player.add_shadow_clone_num(-1)
 
     def sort_skill_list(self):
         """
@@ -360,60 +565,22 @@ class Game:
 
         self.sort_skill_list()
 
-    def handle_skills(self):
+    def apply_skills(self):
         """
         处理招式效果
         """
         self.sort_skill_list()
         # 先处理先攻招式
-        while self.skill_instances and self.skill_instances[0].priority == 0:
-            skill = self.skill_instances.pop(0)
-            source = skill.source
-
-            if skill.is_sharingan():  # 处理写轮眼
-                source = skill.source
-                print(f"{source} 写轮眼发动")
-
-                sharingan_skills = self.get_sharingan_skills(source)
-                if len(sharingan_skills) == 1:
-                    print(f"{source} 只能复制招式 {sharingan_skills[0]}")
-                    skill_id = sharingan_skills[0].id
-                else:
-                    print(f"{source} 开始选择要复制的招式")
-                    skill_id = self.select_skill_id(source, sharingan_skills)
-
-                legal_targets = self.get_legal_targets(source)
-
-                target_num = skill_info_dict[skill_id].target_num
-                # 判断该玩家的招式是否需要选择目标或无目标
-                if target_num == 0:
-                    print(f"{source} 不需要选择目标")
-                    skill_targets = []
-                elif not legal_targets:
-                    print(f"{source} 没有可选择的目标，无效")
-                    skill_targets = []
-                elif len(legal_targets) == 1:  # 没得选
-                    print(f"{source} 只能选择目标 {legal_targets[0].__str__()}")
-                    skill_targets = legal_targets * target_num
-                else:
-                    print(f"{source} 开始选择复制的招式的目标")
-                    skill_targets = self.select_skill_targets(source)
-
-                skill_instance = self.instantiate_skill(skill_id, source, skill_targets)
-
-                if not skill_instance:
-                    continue
-                # 如果是先攻技能则放到前面立即执行，否则不执行
-                elif skill_instance.priority == 0:
-                    self.skill_instances.insert(0, skill_instance)
-                else:
-                    self.skill_instances.append(skill_instance)
-            else:
-                skill.apply()
+        priority_skills = [
+            skill for skill in self.skill_instances if skill.priority == 0
+        ]
+        for skill in priority_skills:
+            skill.apply()
         # 处理招式列表
         self.preprocess_skill_list()
         # 处理剩余招式
-        for skill in self.skill_instances:
+        other_skills = [skill for skill in self.skill_instances if skill.priority > 0]
+        for skill in other_skills:
             skill.apply()
 
     def handle_balls_counteract(self):
@@ -443,7 +610,19 @@ class Game:
         for ball in all_balls:
             ball.apply()
 
+    def handle_life_steal(self):
+        """
+        处理魂吸
+        """
+        for player in self.get_available_players():
+            if player.is_soul_stealed:
+                player.clear_mp()
+                player.is_soul_stealed = False  # 解除魂吸
+
     def clear_skills(self):
+        """
+        清理选择和列表
+        """
         self.skill_ids = [-1] * self.player_num
         self.skill_targets = [[] for _ in range(self.player_num)]
         self.skill_instances = []
@@ -467,7 +646,7 @@ class Game:
 
         return int(skill_id)
 
-    def user_select_targets(
+    def user_select_skill_targets(
         self, legal_targets: list[Player], target_num: int
     ) -> list[Player]:
         def is_valid_input(s: str, legal_target_ids: list[int], target_num: int):
@@ -503,127 +682,47 @@ class Game:
         return [self.players[target_id] for target_id in target_ids]
 
     def run(self):
-        turns_count = 1
         print("游戏开始")
 
         while True:
             print("\n——————————————————————————————")
-            print(f"开始第 {turns_count} 回合")
-            turns_count += 1
+            print(f"开始第 {self.round_count} 回合")
+            self.round_count += 1
 
             for player in self.players:
                 player.print_status()
 
+            # 加载预选招式
+            self.load_exposed_selection()
+
             # 选择招式
             print("\n↓↓↓↓↓↓ 玩家开始选择招式 ↓↓↓↓↓↓↓\n")
-
-            for player in self.get_available_players():
-                if player.is_bound():
-                    print(f"{player} 被束缚，跳过招式选择")
-                    continue
-
-                print(f"{player} 开始选择招式")
-                legal_skills = self.get_leagl_skills(player)
-                skill_id = self.select_skill_id(player, legal_skills)
-                self.skill_ids[player.id] = skill_id
+            self.handle_skill_ids_selection()
 
             # 选择目标
             print("\n↓↓↓↓↓↓ 玩家开始选择目标 ↓↓↓↓↓↓↓\n")
+            self.handle_skill_targets_selection()
+            self.handle_shadow_clone_skills()
+            self.handle_sharingan_skills()
 
-            for player in self.get_available_players():
-                if player.is_bound():
-                    print(f"{player} 被束缚，跳过目标选择")
-                    continue
-
-                legal_targets = self.get_legal_targets(player)
-
-                target_num = skill_info_dict[self.skill_ids[player.id]].target_num
-                # 判断该玩家的招式是否需要选择目标
-                if target_num == 0:
-                    print(f"{player} 不需要选择目标")
-                    continue
-                elif not legal_targets:
-                    print(f"{player} 没有可选择的目标，无效")
-                    self.skill_targets[player.id] = []
-                elif len(legal_targets) == 1:  # 没得选
-                    print(f"{player} 只能选择目标 {legal_targets[0]}")
-                    self.skill_targets[player.id] = legal_targets * target_num
-                else:
-                    print(
-                        f"{player} 开始选择 {skill_info_dict[self.skill_ids[player.id]].name} 的目标"
-                    )
-                    targets = self.select_skill_targets(
-                        player, legal_targets, target_num
-                    )
-                    self.skill_targets[player.id] = targets
-
+            # 实例化
             print("\n↓↓↓↓↓↓ 玩家选择完毕，开始执行 ↓↓↓↓↓↓↓\n")
-            # 实例化技能并扣蓝
-            for player in self.get_available_players():
-                if player.is_bound():
-                    player.add_bind_turns(-1)  # 解除束缚
-                    continue
+            self.load_selected_skills()
 
-                skill_instance = self.instantiate_skill(
-                    self.skill_ids[player.id], player, self.skill_targets[player.id]
-                )
+            # 更新玩家状态
+            self.update_player_status()
 
-                player.use_mp(
-                    skill_info_dict[self.skill_ids[player.id]].cost
-                )  # 不能直接用技能实例的属性，因为实例可能为 None
-
-                if skill_instance:
-                    self.skill_instances.append(skill_instance)
-                # 影分身
-                while player.shadow_clone_num and skill_instance.cost <= player.mp:
-                    player.use_mp(skill_info_dict[self.skill_ids[player.id]].cost)
-                    player.add_shadow_clone_num(-1)
-
-                    if skill_instance:
-                        self.skill_instances.append(skill_instance)
-            # 处理
-            self.handle_skills()
+            # 执行
+            self.apply_skills()
             self.handle_balls()
+            self.handle_life_steal()
+            self.clear_skills()
 
             # 看透预选择
-            exposed_players = [player for player in self.players if player.is_exposed]
-            if len(exposed_players):
-                print("\n------ 开始看透的预选阶段 ------\n")
-            for player in exposed_players:
-                print(f"{player} 开始看透预选择")
-                legal_skills = self.get_leagl_skills(player)
-                skill_id = self.select_skill_id(player, legal_skills)
-                self.preselected_skill_ids[player.id] = skill_id
-                player.preselected_skill_id = skill_id
+            print("\n------ 开始看透的预选阶段 ------\n")
+            self.handle_skill_ids_selection(True)
+            self.handle_skill_targets_selection(True)
 
-                legal_targets = self.get_legal_targets(player)
-                target_num = skill_info_dict[skill_id].target_num
-                # 判断该玩家的招式是否需要选择目标
-                if target_num == 0:
-                    print(f"{player} 不需要选择目标")
-                    self.preselected_skill_targets[player.id] = []
-                elif len(legal_targets) == 1:  # 没得选
-                    print(f"{player} 只能选择目标 {legal_targets[0]}")
-                    self.preselected_skill_targets[player.id] = (
-                        legal_targets * target_num
-                    )
-                else:
-                    print(f"{player} 开始看透预选择目标")
-                    targets = self.select_skill_targets(
-                        player, legal_targets, target_num
-                    )
-                    self.preselected_skill_targets[player.id] = targets
-
-                player.preselected_target_ids = [
-                    target.id for target in self.preselected_skill_targets[player.id]
-                ]
-            # 处理魂吸
-            for player in self.get_available_players():
-                if player.is_soul_stealed:
-                    player.clear_mp()
-                    player.is_soul_stealed = False  # 解除魂吸
-            # 清理选择以及招式效果持续回合
-            self.clear_skills()
             # 游戏结束判断
             if self.is_game_over():
                 break

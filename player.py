@@ -1,6 +1,7 @@
 class Player:
-    def __init__(self, id):
+    def __init__(self, id, is_human=True):
         self.id = id
+        self.is_human = is_human
         # 基础状态参数
         self.hp = 2
         self.mp = 100
@@ -15,15 +16,15 @@ class Player:
         self.acupoint_seal_turns = 0  # 封穴
         self.shadow_clone_num = 0  # 影分身
         self.sixpaths_mode_turns = 0  # 六道模式
-        self.is_soul_stealed = False  # 本回合是否被魂吸
         self.is_fatal_sealed = False  # 封尽
         self.is_in_kamui_zone = False  # 是否在神威空间
+        # 回合辅助参数
+        self.is_soul_stealed = False  # 本回合是否被魂吸
+        self.is_using_sharingan = False # 本回合是否使用写轮眼
         # 招式选择参数
         self.selected_skill_id = -1
         # 看透招式选择参数
         self.charmed_by = -1
-        self.preselected_skill_id = -1
-        self.preselected_target_ids = []
 
     def __str__(self):
         return f"<玩家 {self.id}>"
@@ -53,11 +54,6 @@ class Player:
         
         if self.bind_turns:
             print('剩余束缚回合:', self.bind_turns, end='；')
-        
-        if self.is_exposed:
-            print('被看透，预选招式:', self.preselected_skill_id, '，招式目标:', self.preselected_target_ids, end='；')
-            if self.charmed_by != -1:
-                print('被魅惑:', self.charmed_by, end='；')
             
         if self.acupoint_seal_turns:
             print('封穴剩余回合:', self.acupoint_seal_turns, end='；')
