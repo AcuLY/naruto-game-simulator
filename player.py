@@ -102,12 +102,24 @@ class Player:
         if amount:
             print(f"{self} 消耗了 {amount} 点查克拉，剩余：{self.mp}")
 
-    def clear_mp(self):
+    def receive_mp_damage(self, damage: int) -> int:
         """
-        被魂吸
+        被减少 mp
+        
+        Args:
+            damage (int): 减少量
+        Returns:
+            int: 实际减少量
         """
-        self.mp = 0
-        print(f"{self} 被魂吸，查克拉清零")
+        if not self.is_available():
+            return 0
+
+        mp_before_damage = self.mp
+        self.mp = max(self.mp - damage, 0)
+        actual_damage = min(mp_before_damage, damage)
+        
+        print(f'{self} 被攻击减少了 {actual_damage} 点查克拉，剩余：{self.mp}')
+        return actual_damage
 
     def restore_hp(self, amount: int):
         """
@@ -118,10 +130,12 @@ class Player:
         """
         if self.is_in_second_life:
             self.second_hp = min(self.second_hp + amount, self.second_max_hp)
-            print(f"{self} 的秽土回复了 {amount} 点生命，剩余: {self.second_hp}")
+            print(f'{self} 的秽土回复了 {amount} 点生命，剩余: {self.second_hp}')
         else:
             self.hp = min(self.hp + amount, self.max_hp)
-            print(f"{self} 的本体回复了 {amount} 点生命，剩余：{self.hp}")
+            print(f'{self} 的本体回复了 {amount} 点生命，剩余：{self.hp}')
+        
+        return True
 
     def add_max_hp(self):
         """

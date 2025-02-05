@@ -1,4 +1,7 @@
+import reward
 from player import Player
+
+SKILL_NUM = 29
 
 NONE_ACTION_ID = -1
 MEDITATION_ID = 0
@@ -7,6 +10,7 @@ RASENGAN_ID = 2
 REVOLVING_HEAVEN_ID = 3
 SHADOW_BINDING_ID = 4
 BYAKUGAN_ID = 5
+ONE_THOUSAND_YEARS_OF_DEATH_ID = 28
 TWIN_RASENGAN_ID = 6
 CHIDORI_ID = 7
 EIGHT_TRIGRAMS_SIXTY_FOUR_PALMS_ID = 8
@@ -30,7 +34,6 @@ DEAD_DEMON_CONSUMING_SEAL_ID = 25
 KAMUI_ID = 26
 HEAVENLY_TRANSFER_ID = 27
 
-SKILL_NUM = 28
 SIX_PATHS_SKILL_IDS = [SHINRA_TENSEI_ID, BANSHOUTENIN_ID, NARAKA_PATH_ID, HUMAN_PATH_ID, ANIMAL_PATH_ID, ASURA_PATH_ID, PRETA_PATH_ID]
 
 
@@ -59,20 +62,20 @@ class Ball:
         """
         return self.source.is_in_kamui_zone == self.target.is_in_kamui_zone
 
-    def apply(self):
+    def apply(self) -> int:
         """
         球执行的对外接口
         """
         if not self.source or not self.target:
             print(f"{self} 失效")
-            return
+            return reward.BALL_APPLICATION_FAILURE_PENALTY
 
         if not self.is_zone_status_available():
             print(f"{self} 由于不在一个空间，无效")
-            return
+            return reward.BALL_APPLICATION_FAILURE_PENALTY
 
         print(f"{self} 命中")
-        self.execute()
+        return self.execute()
 
     def execute(self):
         """
@@ -95,52 +98,90 @@ class Damage(Ball):
         self.damage = damage
         self.life_steal = life_steal
 
-    def execute(self):
+    def execute(self) -> int:
         actual_damage = self.target.receive_damage(self.damage)
 
         # 吸血逻辑
         if self.life_steal:
             print(f"{self.source} 触发效果<吸血>")
             self.source.restore_hp(actual_damage)
+        
+        return actual_damage
+
+
+class MpDamage(Ball):
+    def __init__(self, name: str, cost: int, source: Player, target: Player, damage: int):
+        super().__init__(name, cost, source, target)
+    
+    def apply(self) -> int:
+        if not self.target.mp:
+            print(f'{self.target} 已经没有查克拉，无法扣除')
+            return reward.SKILL_APPLICATION_FAILURE_PENALTY
+        
+        return self.execute()
+    
+    def execute(self)-> int:
+        actual_damage = self.target.receive_mp_damage(self.damage)
+        return actual_damage
 
 
 class Bind(Ball):
     def __init__(self, name: str, cost: int, source: Player, target: Player):
         super().__init__(name, cost, source, target)
 
-    def execute(self):
+    def execute(self) -> int:
         self.target.add_bind_turns(1)
+        return reward.BIND_SUCCESS_REWARD
 
 
 class Expose(Ball):
     def __init__(self, name: str, cost: int, source: Player, target: Player):
         super().__init__(name, cost, source, target)
+    
+    def apply(self) -> int:
+        if not self.source or not self.target:
+            print(f"{self} 失效")
+            return reward.BALL_APPLICATION_FAILURE_PENALTY
 
-    def execute(self):
+        if not self.is_zone_status_available():
+            print(f"{self} 由于不在一个空间，无效")
+            return reward.BALL_APPLICATION_FAILURE_PENALTY
+
         if self.target.is_exposed:
             print(f'{self.target} 已被看透，{self} 无效')
+            return reward.BALL_APPLICATION_FAILURE_PENALTY
+
+        print(f"{self} 命中")
+        return self.execute()
+
+    def execute(self) -> int:
         self.target.expose()
         self.target.charmed_by = self.source
+        
+        return reward.EXPOSE_SUCCESS_REWARD
 
 
 class SealAcupoint(Ball):
     def __init__(self, name: str, cost: int, source: Player, target: Player):
         super().__init__(name, cost, source, target)
 
-    def execute(self):
+    def execute(self) -> int:
         self.target.add_acupoint_seal_turns(1)
+        return reward.SEAL_ACUPOINT_SUCCESS_REWARD
 
 
 class StealSoul(Ball):
     def __init__(self, name: str, cost: int, source: Player, target: Player):
         super().__init__(name, cost, source, target)
 
-    def execute(self):
+    def execute(self) -> int:
         print(f'{self} 触发效果<魂吸>')
         self.target.is_soul_stealed = True
 
         target_mp = self.target.mp
         self.source.restore_mp(target_mp)
+        
+        return target_mp
 
 
 class BallMatrix:
@@ -225,15 +266,15 @@ class Skill:
     def __str__(self):
         return f"{self.source} 使用的 <{self.name}>"
 
-    def apply(self):
+    def apply(self) -> int:
         if not self.source.is_available():
             print(f'{self.source} 已死亡，无法再使用 {self.name}')
-            return
+            return reward.SKILL_APPLICATION_FAILURE_PENALTY
         
         print(f"{self} 发动")
-        self.execute()
+        return self.execute()
 
-    def execute(self):
+    def execute(self) -> int:
         raise NotImplementedError()
 
 
@@ -249,10 +290,10 @@ class PrioritySkill(Skill):
     def __str__(self):
         return f"{self.source} 对 {self.target} 使用的 <{self.name}>"
     
-    def apply(self):
+    def apply(self) -> int:
         # 先攻招式必定发动
         print(f"{self} 发动")
-        self.execute()
+        return self.execute()
 
 
 class ZoneSkill(Skill):
@@ -315,8 +356,9 @@ class Meditation(StatusSkill):
     def __init__(self, source: Player):
         super().__init__("打坐", 0, 0, source)
 
-    def execute(self):
+    def execute(self) -> int:
         self.source.restore_mp(1)
+        return reward.SKILL_APPLICATION_SUCCESS_REWARD
 
 
 class Heal(StatusSkill):
@@ -331,20 +373,29 @@ class Heal(StatusSkill):
     def __str__(self):
         return f'{self.source} 对 {self.target} 使用的 <{self.name}>'
     
-    def apply(self):
+    def apply(self) -> int:
         if not self.source.is_available():
             print(f'{self.source} 已死亡，无法再使用 {self.name}')
-            return
+            return reward.SKILL_APPLICATION_FAILURE_PENALTY
 
         if self.source.is_in_kamui_zone != self.target.is_in_kamui_zone:
             print(f'由于不在一个空间，{self} 无效')
-            return
+            return reward.SKILL_APPLICATION_FAILURE_PENALTY
+        
+        target = self.target
+        if target.is_in_second_life and target.second_hp == target.second_max_hp:
+            print(f'{target} 的秽土已经满血，不能继续回血')
+            return reward.SKILL_APPLICATION_FAILURE_PENALTY
+        elif not target.is_in_second_life and target.hp == target.max_hp:
+            print(f'{target} 的本体已经满血，不能继续回血')
+            return reward.SKILL_APPLICATION_FAILURE_PENALTY
         
         print(f"{self} 发动")
-        self.execute()
+        return self.execute()
 
-    def execute(self):
+    def execute(self) -> int:
         self.target.restore_hp(1)
+        return reward.SKILL_APPLICATION_SUCCESS_REWARD
 
 
 class Rasengan(BallSkill):
@@ -355,11 +406,13 @@ class Rasengan(BallSkill):
     def __init__(self, source: Player, targets: list[Player], ball_matrix: BallMatrix):
         super().__init__("螺旋丸", 2, 1, source, targets, ball_matrix)
 
-    def execute(self):
+    def execute(self) -> int:
         ball = Damage(self.name, 1, self.source, self.targets[0], 1)
         self.ball_matrix.insert_ball(
             self.source.id, self.targets[0].id, ball
         )  # 在邻接矩阵中插入球
+        
+        return reward.BALL_INSERT_SUCCESS_REWARD
 
 
 class RevolvingHeaven(RewriteSkill):
@@ -370,7 +423,9 @@ class RevolvingHeaven(RewriteSkill):
     def __init__(self, source: Player, ball_matrix: BallMatrix):
         super().__init__("回天", 3, 1, source, ball_matrix)
 
-    def execute(self):
+    def execute(self) -> int:
+        successful_defence_num = 0
+        
         for player_id in range(self.ball_matrix.size):
             if player_id == self.source.id:  # 跳过自己
                 continue
@@ -378,6 +433,10 @@ class RevolvingHeaven(RewriteSkill):
             for ball in self.ball_matrix.get_balls(player_id, self.source.id):
                 print(f'{self} 将 {ball} 抵挡')
                 ball.target = None
+                
+                successful_defence_num += 1
+
+        return successful_defence_num * reward.DEFENCE_REWARD
 
 
 class ShadowBinding(BallSkill):
@@ -388,11 +447,13 @@ class ShadowBinding(BallSkill):
     def __init__(self, source: Player, targets: list[Player], ball_matrix: BallMatrix):
         super().__init__("影子束缚术", 4, 1, source, targets, ball_matrix)
 
-    def execute(self):
+    def execute(self) -> int:
         ball = Bind(self.name, 1, self.source, self.targets[0])
         self.ball_matrix.insert_ball(
             self.source.id, self.targets[0].id, ball
         )  # 在邻接矩阵中插入球
+        
+        return reward.BALL_INSERT_SUCCESS_REWARD
 
 
 class Byakugan(StatusSkill):
@@ -404,23 +465,41 @@ class Byakugan(StatusSkill):
         super().__init__('白眼', 5, 1, source)
         self.target = target
     
-    def apply(self):
+    def apply(self) -> int:
         if not self.source.is_available():
             print(f'{self.source} 已死亡，无法再使用 {self.name}')
-            return
+            return reward.SKILL_APPLICATION_FAILURE_PENALTY
 
         if self.source.is_in_kamui_zone != self.target.is_in_kamui_zone:
             print(f'由于不在一个空间，{self} 无效')
-            return
+            return reward.SKILL_APPLICATION_FAILURE_PENALTY
         
         if self.target.is_exposed:
             print(f'{self.target} 已被看透，{self} 无效')
+            return reward.SKILL_APPLICATION_FAILURE_PENALTY
         
         print(f"{self} 发动")
-        self.execute()
+        return self.execute()
 
-    def execute(self):
+    def execute(self) -> int:
         self.target.expose()
+        return reward.BYAKUGAN_SUCCESS_REWARD
+
+
+class OneThousandYearsOfDeath(BallSkill):
+    """
+    千年杀
+    """
+    def __init__(self, source: Player, targets: list[Player], ball_matrix: BallMatrix):
+        super().__init__("千年杀", ONE_THOUSAND_YEARS_OF_DEATH_ID, 1, source, targets, ball_matrix)
+
+    def execute(self) -> int:
+        ball = MpDamage(self.name, 1, self.source, self.targets[0], 1)
+        self.ball_matrix.insert_ball(
+            self.source.id, self.targets[0].id, ball
+        )  # 在邻接矩阵中插入球
+        
+        return reward.BALL_INSERT_SUCCESS_REWARD
 
 
 class TwinRasengan(BallSkill):
@@ -431,11 +510,13 @@ class TwinRasengan(BallSkill):
     def __init__(self, source: Player, targets: list[Player], ball_matrix: BallMatrix):
         super().__init__("螺旋连丸", 6, 2, source, targets, ball_matrix)
 
-    def execute(self):
+    def execute(self) -> int:
         # 遍历目标并在邻接矩阵插入球
         for target in self.targets:
             ball = Damage(self.name, 1, self.source, target, 1)
             self.ball_matrix.insert_ball(self.source.id, target.id, ball)
+        
+        return reward.BALL_INSERT_SUCCESS_REWARD
 
 
 class Chidori(BallSkill):
@@ -446,11 +527,13 @@ class Chidori(BallSkill):
     def __init__(self, source: Player, targets: list[Player], ball_matrix: BallMatrix):
         super().__init__("千鸟", 7, 2, source, targets, ball_matrix)
 
-    def execute(self):
+    def execute(self) -> int:
         ball = Damage(self.name, 2, self.source, self.targets[0], 1, True)
         self.ball_matrix.insert_ball(
             self.source.id, self.targets[0].id, ball
         )  # 在邻接矩阵中插入球
+        
+        return reward.BALL_INSERT_SUCCESS_REWARD
 
 
 class EightTrigramsSixtyFourPalms(BallSkill):
@@ -461,7 +544,7 @@ class EightTrigramsSixtyFourPalms(BallSkill):
     def __init__(self, source: Player, targets: list[Player], ball_matrix: BallMatrix):
         super().__init__("八卦六十四掌", 8, 2, source, targets, ball_matrix)
 
-    def execute(self):
+    def execute(self) -> int:
         # 伤害球
         damage_ball = Damage(self.name, 1, self.source, self.targets[0], 1)
         self.ball_matrix.insert_ball(self.source.id, self.targets[0].id, damage_ball)
@@ -470,6 +553,8 @@ class EightTrigramsSixtyFourPalms(BallSkill):
         self.ball_matrix.insert_ball(
             self.source.id, self.targets[0].id, seal_acupoint_ball
         )
+        
+        return reward.BALL_INSERT_SUCCESS_REWARD
 
 
 class MindBodySwitch(BallSkill):
@@ -481,11 +566,13 @@ class MindBodySwitch(BallSkill):
         super().__init__("心转身之术", 9, 2, source, targets, ball_matrix)
         self.is_target_repeated = False
 
-    def execute(self):
+    def execute(self) -> int:
         ball = Expose(self.name, 2, self.source, self.targets[0])
         self.ball_matrix.insert_ball(
             self.source.id, self.targets[0].id, ball
         )  # 在邻接矩阵中插入球
+        
+        return reward.BALL_INSERT_SUCCESS_REWARD
 
 
 class DeathControllingPossessedBlood(PrioritySkill):
@@ -496,9 +583,11 @@ class DeathControllingPossessedBlood(PrioritySkill):
     def __init__(self, source: Player, target: Player):
         super().__init__("死司凭血", 10, 2, source, target)
 
-    def execute(self):
+    def execute(self) -> int:
         self.source.receive_damage(1)
         self.target.receive_damage(1)
+        
+        return reward.DEATH_CONTROLLING_POSSESSED_BLOOD_REWARD
 
 
 class ShadowClone(StatusSkill):
@@ -509,8 +598,10 @@ class ShadowClone(StatusSkill):
     def __init__(self, source: Player):
         super().__init__("影分身之术", 11, 2, source)
 
-    def execute(self):
+    def execute(self) -> int:
         self.source.add_shadow_clone_num(1)
+        
+        return reward.SHADOW_CLONE_REWARD
 
 
 class Rasenshuriken(BallSkill):
@@ -521,13 +612,15 @@ class Rasenshuriken(BallSkill):
     def __init__(self, source: Player, targets: list[Player], ball_matrix: BallMatrix):
         super().__init__("螺旋手里剑", 12, 3, source, targets, ball_matrix)
 
-    def execute(self):
+    def execute(self) -> int:
         self.source.receive_damage(1)  # 使用者扣 1 点血
 
         ball = Damage(self.name, 3, self.source, self.targets[0], 3)
         self.ball_matrix.insert_ball(
             self.source.id, self.targets[0].id, ball
         )  # 在邻接矩阵中插入球
+        
+        return reward.BALL_INSERT_SUCCESS_REWARD
 
 
 class MirrorReturn(RewriteSkill):
@@ -538,7 +631,9 @@ class MirrorReturn(RewriteSkill):
     def __init__(self, source: Player, ball_matrix: BallMatrix):
         super().__init__("镜反", 13, 3, source, ball_matrix)
 
-    def execute(self):
+    def execute(self) -> int:
+        successful_return_num = 0
+        
         for player_id in range(self.ball_matrix.size):
             if player_id == self.source.id:  # 跳过自己
                 continue
@@ -548,6 +643,10 @@ class MirrorReturn(RewriteSkill):
                 source = ball.source
                 ball.source = ball.target
                 ball.target = source
+                
+                successful_return_num += 1
+        
+        return successful_return_num * reward.RETURN_REWARD
 
 
 class Sharingan(PrioritySkill):
@@ -558,8 +657,9 @@ class Sharingan(PrioritySkill):
     def __init__(self, source: Player, target: Player):
         super().__init__("写轮眼", 14, 3, source, target)
     
-    def apply(self):
+    def apply(self) -> int:
         print(f'{self.target} 的招式被 {self.source} 复制')
+        return reward.SHARINGAN_REWARD
 
 
 class ChidoriCurrent(BallSkill):
@@ -570,11 +670,13 @@ class ChidoriCurrent(BallSkill):
     def __init__(self, source: Player, targets: list[Player], ball_matrix: BallMatrix):
         super().__init__("千鸟流", 15, 4, source, targets, ball_matrix)
 
-    def execute(self):
+    def execute(self) -> int:
         # 遍历目标并在邻接矩阵插入球
         for target in self.targets:
             ball = Damage(self.name, 1, self.source, target, 1, True)
             self.ball_matrix.insert_ball(self.source.id, target.id, ball)
+        
+        return reward.BALL_INSERT_SUCCESS_REWARD
 
 
 class SixPathsMode(StatusSkill):
@@ -585,8 +687,9 @@ class SixPathsMode(StatusSkill):
     def __init__(self, source: Player):
         super().__init__("六道模式", 16, 5, source)
 
-    def execute(self):
+    def execute(self) -> int:
         self.source.add_sixpaths_mode_turns(2)
+        return reward.SIX_PATHS_MODE_REWARD
 
 
 class ShinraTensei(RewriteSkill):
@@ -597,7 +700,9 @@ class ShinraTensei(RewriteSkill):
     def __init__(self, source: Player, ball_matrix: BallMatrix):
         super().__init__("神罗天征", 17, 0, source, ball_matrix)
 
-    def execute(self):
+    def execute(self) -> int:
+        successful_return_num = 0
+        
         for player_id in range(self.ball_matrix.size):
             if player_id == self.source.id:  # 跳过自己
                 continue
@@ -605,6 +710,10 @@ class ShinraTensei(RewriteSkill):
             for ball in self.ball_matrix.get_all_balls():
                 print(f'{self} 将 {ball} 的目标改为 {ball.source}')
                 ball.target = ball.source
+                
+                successful_return_num += 1
+        
+        return successful_return_num * reward.RETURN_REWARD
 
 
 class Banshoutenin(RewriteSkill):
@@ -615,7 +724,9 @@ class Banshoutenin(RewriteSkill):
     def __init__(self, source: Player, ball_matrix: BallMatrix):
         super().__init__("万象天引", 18, 0, source, ball_matrix)
 
-    def execute(self):
+    def execute(self) -> int:
+        successful_attract_num = 0
+        
         for player_id in range(self.ball_matrix.size):
             if player_id == self.source.id:  # 跳过自己
                 continue
@@ -623,6 +734,10 @@ class Banshoutenin(RewriteSkill):
             for ball in self.ball_matrix.get_all_balls():
                 print(f'{self} 将 {ball} 的目标改为 {self.source}')
                 ball.target = self.source
+                
+                successful_attract_num += 1
+
+        return successful_attract_num * reward.RETURN_REWARD
 
 
 class NarakaPath(StatusSkill):
@@ -633,10 +748,12 @@ class NarakaPath(StatusSkill):
     def __init__(self, source: Player):
         super().__init__("地狱道", 19, 0, source)
 
-    def execute(self):
+    def execute(self) -> int:
         self.source.restore_hp(
             self.source.max_hp
         )  # 回复生命值至最大，restore_hp 会处理上限
+        
+        return reward.SKILL_APPLICATION_SUCCESS_REWARD
 
 
 class HumanPath(BallSkill):
@@ -647,11 +764,13 @@ class HumanPath(BallSkill):
     def __init__(self, source: Player, targets: list[Player], ball_matrix: BallMatrix):
         super().__init__("人间道", 20, 0, source, targets, ball_matrix)
 
-    def execute(self):
+    def execute(self) -> int:
         ball = StealSoul(self.name, 5, self.source, self.targets[0])
         self.ball_matrix.insert_ball(
             self.source.id, self.targets[0].id, ball
         )  # 在邻接矩阵中插入球
+        
+        return reward.BALL_INSERT_SUCCESS_REWARD
 
 
 class AnimalPath(StatusSkill):
@@ -662,8 +781,10 @@ class AnimalPath(StatusSkill):
     def __init__(self, source: Player):
         super().__init__("畜生道", 21, 0, source)
 
-    def execute(self):
+    def execute(self) -> int:
         self.source.add_max_hp()
+        
+        return reward.SKILL_APPLICATION_SUCCESS_REWARD
 
 
 class AsuraPath(BallSkill):
@@ -674,11 +795,13 @@ class AsuraPath(BallSkill):
     def __init__(self, source: Player, targets: list[Player], ball_matrix: BallMatrix):
         super().__init__("修罗道", 22, 0, source, targets, ball_matrix)
 
-    def execute(self):
+    def execute(self) -> int:
         # 遍历目标并在邻接矩阵插入球
         for target in self.targets:
             ball = Damage(self.name, 1, self.source, target, 1)
             self.ball_matrix.insert_ball(self.source.id, target.id, ball)
+        
+        return reward.BALL_INSERT_SUCCESS_REWARD
 
 
 class PretaPath(RewriteSkill):
@@ -689,7 +812,9 @@ class PretaPath(RewriteSkill):
     def __init__(self, source: Player, ball_matrix: BallMatrix):
         super().__init__("饿鬼道", 23, 0, source, ball_matrix)
 
-    def execute(self):
+    def execute(self) -> int:
+        successful_absorption_num = 0
+        
         for player_id in range(self.ball_matrix.size):
             if player_id == self.source.id:  # 跳过自己
                 continue
@@ -699,6 +824,10 @@ class PretaPath(RewriteSkill):
 
                 print(f'{self} 触发效果 <饿鬼>')
                 self.source.restore_mp(ball.cost)
+                
+                successful_absorption_num += 1
+        
+        return successful_absorption_num * reward.PRETA_REWARD
 
 
 class ImpureWorldReincarnatio(StatusSkill):
@@ -710,20 +839,21 @@ class ImpureWorldReincarnatio(StatusSkill):
         super().__init__("秽土转生", 24, 6, source)
         self.target = target
     
-    def apply(self):
+    def apply(self) -> int:
         if not self.source.is_available():
             print(f'{self.source} 已死亡，无法再使用 {self.name}')
-            return
+            return reward.SKILL_APPLICATION_FAILURE_PENALTY
 
         if self.source.is_in_kamui_zone != self.target.is_in_kamui_zone:
             print(f'由于不在一个空间，{self} 无效')
-            return
+            return reward.SKILL_APPLICATION_FAILURE_PENALTY
         
         print(f"{self} 发动")
-        self.execute()
+        return self.execute()
 
-    def execute(self):
+    def execute(self) -> int:
         self.target.reanimation()
+        return reward.SKILL_APPLICATION_SUCCESS_REWARD
 
 
 class DeadDemonConsumingSeal(PrioritySkill):
@@ -734,9 +864,11 @@ class DeadDemonConsumingSeal(PrioritySkill):
     def __init__(self, source: Player, target: Player):
         super().__init__("尸鬼封尽", 25, 7, source, target)
 
-    def execute(self):
-        self.source.fatal_seal()
+    def execute(self) -> int:
+        self.source.receive_damage(5)
         self.target.fatal_seal()
+        
+        return reward.SKILL_APPLICATION_SUCCESS_REWARD
 
 
 class Kamui(ZoneSkill):
@@ -747,13 +879,15 @@ class Kamui(ZoneSkill):
     def __init__(self, source: Player):
         super().__init__("神威", 26, 7, source)
 
-    def execute(self):
+    def execute(self) -> int:
         self.source.switch_zone()
         
         if self.source.is_in_kamui_zone:
             print(f'{self.source} 进入神威空间')
         else:
             print(f'{self.source} 进入现实空间')
+        
+        return reward.SKILL_APPLICATION_SUCCESS_REWARD
 
 
 class HeavenlyTransfer(ZoneSkill):
@@ -768,10 +902,12 @@ class HeavenlyTransfer(ZoneSkill):
     def __str__(self):
         return f'{self.source} 对 {self.target} 使用的 <{self.name}>'
 
-    def execute(self):
+    def execute(self) -> int:
         self.target.switch_zone()
         
         if self.target.is_in_kamui_zone:
             print(f'{self.target} 进入神威空间')
         else:
             print(f'{self.target} 进入现实空间')
+        
+        return reward.SKILL_APPLICATION_SUCCESS_REWARD
